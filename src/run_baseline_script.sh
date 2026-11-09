@@ -1,1 +1,1 @@
-python run_baseline.py --bug-type xss --model-name gpt-4o-mini --analysis-mode single
+python run_baseline.py --bug-type xss --model-name nemotron-lightning-3p5-30b-a3b --mode single

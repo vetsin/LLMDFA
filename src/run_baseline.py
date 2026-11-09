@@ -8,11 +8,9 @@ import re
 from typing import List
 from pathlib import Path
 from datetime import datetime
-import openai
 import tree_sitter
 
-from utility.online_model import OnlineModel
-from utility.llm import LLM
+from utility.llm import LLM, SUPPORTED_MODELS
 
 # Set up paths and language parser
 cwd = Path(__file__).resolve().parent.absolute()
@@ -398,8 +396,6 @@ def run():
     """
     Run the baseline analysis with specified parameters.
     """
-    models = ["gpt-3.5-turbo", "gpt-4-turbo"]
-
     bug_type_mapping = {
         "dbz": (
             "juliet-test-suite-DBZ",
@@ -425,7 +421,7 @@ def run():
     )
     parser.add_argument(
         "--model-name",
-        choices=models,
+        choices=SUPPORTED_MODELS,
         required=True,
         help="The model name to use for analysis.",
     )
@@ -449,9 +445,8 @@ def run():
     mode = args.mode
     project_name = bug_type
 
-    keys = os.environ.get("OPENAI_API_KEY").split(":")
-    openai.api_key = keys[0]
-    baseline_run = BaselineRun(spec, project_name, online_model_name, keys[0], mode)
+    api_key = os.environ["FIREWORKS_API_KEY"]
+    baseline_run = BaselineRun(spec, project_name, online_model_name, api_key, mode)
     baseline_run.start_baseline_run(main_test)
 
 

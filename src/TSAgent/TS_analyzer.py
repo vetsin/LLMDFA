@@ -176,16 +176,24 @@ class TSAnalyzer:
         :return the list of input variable names and the indexes
         """
         inputs = []
-        index = 1
+        index = 0
         for node in call_site_node.children:
             if node.type == "argument_list":
-                for child in node.children:
-                    if child.type == "identifier":
-                        input_var = source_code[child.start_byte : child.end_byte]
+                for child in node.named_children:
+                    if child.type in {"line_comment", "block_comment"}:
+                        continue
+                    # Every argument takes a position, even if it is not tracked.
+                    index += 1
+                    value_node = child
+                    while value_node.type == "cast_expression":
+                        value_node = value_node.child_by_field_name("value")
+                    if value_node.type == "identifier":
+                        input_var = source_code[
+                            value_node.start_byte : value_node.end_byte
+                        ]
                         inputs.append(
                             LocalValue(input_var, line_number, ValueType.ARG, index)
                         )
-                        index += 1
         return inputs
 
     @staticmethod

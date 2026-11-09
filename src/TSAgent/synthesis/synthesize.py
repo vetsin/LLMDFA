@@ -5,7 +5,7 @@ import traceback
 from pathlib import Path
 
 from TSAgent.synthesis.utils import SynSpec, Example, TSUtils
-from TSAgent.synthesis.llm import GPT
+from TSAgent.synthesis.llm import FireworksLLM
 from TSAgent.synthesis.prompts.common import (
     system_role,
     synthesize_task,
@@ -114,7 +114,7 @@ def evaluate_parser(spec: SynSpec, parser: str) -> Feedback | None:
     return feedback
 
 
-def synthesize(model: GPT, spec: SynSpec) -> tuple[str, int]:
+def synthesize(model: FireworksLLM, spec: SynSpec) -> tuple[str, int]:
     """
     Synthesize source or sink extractor from the given specification.
     """

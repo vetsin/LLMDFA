@@ -1,6 +1,15 @@
 import json
+import re
+import sys
 from pathlib import Path
+from typing import Optional
+
 from utility.function import *
+
+MAX_VERDICT_ATTEMPTS = 3
+
+ANSWER_PATTERN = re.compile(r"answer[\s*_`\"':]*\b(yes|no)\b", re.IGNORECASE)
+BARE_VERDICT_PATTERN = re.compile(r"^[\s*_`\"':.]*(yes|no)[\s*_`\"':.]*$", re.IGNORECASE)
 
 
 class LMAgent:
@@ -12,6 +21,8 @@ class LMAgent:
         self.total_input_token_cost = 0
         self.total_output_token_cost = 0
         self.time_cost = 0
+        self.unresolved_verdicts = 0
+        self.last_verdict_response = ""
         self.prompt_config_file_base = (
             Path(__file__).resolve().parent.parent.absolute() / "prompt"
         )
@@ -55,18 +66,41 @@ class LMAgent:
         return items
 
     @staticmethod
-    def process_yes_no_list_in_response(response: str) -> [str]:
-        tmp = (
-            response.replace(",", " ")
-            .replace(".", "")
-            .replace("\n", " ")
-            .replace("-", "")
-            .replace("System:", "")
-            .replace('"', "")
+    def parse_text_verdict(response: str) -> Optional[bool]:
+        """
+        Read the final answer from a text reply: the last `Answer:` marker,
+        otherwise a last line holding only Yes or No. Yes/No words inside the
+        explanation are ignored.
+        """
+        answers = ANSWER_PATTERN.findall(response)
+        if answers:
+            return answers[-1].lower() == "yes"
+        lines = [line for line in response.splitlines() if line.strip()]
+        if lines:
+            bare = BARE_VERDICT_PATTERN.match(lines[-1])
+            if bare:
+                return bare.group(1).lower() == "yes"
+        return None
+
+    def query_verdict(self, message: str) -> Optional[bool]:
+        """
+        Ask a yes/no question, retrying unreadable replies a bounded number of times.
+        :return: The verdict, or None if no readable answer was obtained
+        """
+        for _ in range(MAX_VERDICT_ATTEMPTS):
+            response, input_token_cost, output_token_cost = self.model.infer(
+                message, True
+            )
+            self.total_input_token_cost += input_token_cost
+            self.total_output_token_cost += output_token_cost
+            self.last_verdict_response = response
+            verdict = self.parse_text_verdict(response)
+            if verdict is not None:
+                return verdict
+
+        self.unresolved_verdicts += 1
+        print(
+            f"No readable verdict after {MAX_VERDICT_ATTEMPTS} attempts",
+            file=sys.stderr,
         )
-        ans = []
-        for s in tmp.split(" "):
-            if s not in {"Yes", "No"}:
-                continue
-            ans.append(s)
-        return ans
+        return None

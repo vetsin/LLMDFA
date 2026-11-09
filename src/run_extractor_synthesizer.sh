@@ -1,6 +1,6 @@
 #! /usr/bin/env bash
 
-MODEL=gpt-4o-mini
+MODEL=nemotron-lightning-3p5-30b-a3b
 
 python3 TSAgent/synthesis/main.py --extractor dbz_src --model "$MODEL" --output-file _dbz_src_extractor.py
 python3 TSAgent/synthesis/main.py --extractor dbz_sink --model "$MODEL" --output-file _dbz_sink_extractor.py

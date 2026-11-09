@@ -282,6 +282,9 @@ class InterFlowValidator(LMAgent):
             solving_program = self.construct_solving_program(
                 line_number, message, val_literal
             )
+            if solving_program == "":
+                is_uncertain = True
+                continue
             run_output = ""
 
             try:
@@ -355,22 +358,10 @@ class InterFlowValidator(LMAgent):
             environment, ts_analyzer, bug_candidate
         )
 
-        while True:
-
-            response, input_token_cost, output_token_cost = self.model.infer(message)
-            self.total_input_token_cost += input_token_cost
-            self.total_output_token_cost += output_token_cost
-            self.response_path_check = response
-
-            yes_no_vector = self.process_yes_no_list_in_response(
-                self.response_path_check
-            )
-            if len(yes_no_vector) == 0:
-                continue
-            if "Yes" in yes_no_vector[0] or "yes" in yes_no_vector[0]:
-                return True
-            else:
-                return False
+        verdict = self.query_verdict(message)
+        self.response_path_check = self.last_verdict_response
+        # An unreadable reply keeps the candidate as feasible.
+        return verdict is not False
 
     def extract_function_in_trace(
         self, environment: Environment, bug_candidate: List[Tuple[int, LocalValue]]
@@ -790,7 +781,6 @@ class InterFlowValidator(LMAgent):
                     response.find("```") : response.rfind("```")
                 ].replace("`", "")
                 break
-        assert program != ""
         return program
 
     def refine_solving_program(self, previous_solving_program: str, error_message: str):

@@ -10,22 +10,20 @@ LLMDFA is an LLM-powered data-flow analysis framework. Specifically, it instanti
     cd LLMDFA
     ```
 
-2. Install the required dependencies:
+2. Install the required dependencies with [uv](https://docs.astral.sh/uv/):
     ```shell
-    conda create --name llmdfa python=3.10
-    conda activate llmdfa
-    pip install -r requirements.txt
+    uv sync
     ```
 
 3. Ensure you have the Tree-sitter library and language bindings installed:
     ```shell
     cd lib
-    python build.py
+    uv run python build.py
     ```
 
 4. Configure your key:
     ```shell
-    export OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    export FIREWORKS_API_KEY=fw_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
     ```
 
 ## Quick Start
@@ -36,22 +34,22 @@ LLMDFA is an LLM-powered data-flow analysis framework. Specifically, it instanti
 
     ```shell
     cd src
-    sh run_extractor_synthesizer.sh
+    uv run sh run_extractor_synthesizer.sh
     ```
 
     After that, you can obtain synthesized extractors in the file `src/TSAgent/TS_synthesis_extractor.py`. We also provide the manually crafted extractors in `src/TSAgent/TS_manual_extractor.py`. If you want to use the manually crafted ones, you can just overwrite `src/TSAgent/TS_synthesis_extractor.py` with the content of `src/TSAgent/TS_manual_extractor.py`.
 
-    Then you can run the following commands to detect XSS bugs using LLMDFA powered by `gpt-4o-mini` as a demo, which contains 10 cases.
+    Then you can run the following commands to detect XSS bugs using LLMDFA powered by `nemotron-lightning-3p5-30b-a3b` as a demo, which contains 10 cases.
 
     ```shell
     cd src
-    python run_llmdfa.py --bug-type xss --model-name gpt-4o-mini \
+    uv run python run_llmdfa.py --bug-type xss --model-name nemotron-lightning-3p5-30b-a3b \
         -syn-parser -fscot -syn-solve \
         --solving-refine-number 3 \
         --analysis-mode single    
     ```
 
-    Then you can obtain the bug report in the directory `log/gpt-4o-mini/synparser_fscot_synsolver`. Also, the console output indicates the numbers of TPs and FPs. Here is an example:
+    Then you can obtain the bug report in the directory `log/nemotron-lightning-3p5-30b-a3b/synparser_fscot_synsolver`. Also, the console output indicates the numbers of TPs and FPs. Here is an example:
 
     ```
     CWE369_Divide_by_Zero__int_database_modulo_81 
@@ -65,7 +63,9 @@ LLMDFA is an LLM-powered data-flow analysis framework. Specifically, it instanti
 
     If you want to change the bug types, you can reset the value of `bug-type` to `osci` and `dbz`.
 
-    If you want to change the LLMs, you can just change the value of `model-name` to the name of the models you want to use, such as `gpt-3.5-turbo` and `gpt-4-turbo`. The output reports of LLMDFA are stored in separate directories in `log` when using different LLMs.
+    Each case's directory also contains `llm_calls.jsonl` with every prompt and raw reply, and `run_summary.json` holds the totals for a run.
+
+    LLMDFA runs on [Fireworks](https://fireworks.ai). To use another Fireworks model, add its name to `SUPPORTED_MODELS` in `src/utility/llm.py` and pass it as `model-name`. The output reports of LLMDFA are stored in separate directories in `log` when using different LLMs.
 
 2. Run ablations of LLMDFA
 
@@ -75,7 +75,7 @@ LLMDFA is an LLM-powered data-flow analysis framework. Specifically, it instanti
 
     ```shell
     cd src
-    python run_llmdfa.py --bug-type xss --model-name gpt-4o-mini \
+    uv run python run_llmdfa.py --bug-type xss --model-name nemotron-lightning-3p5-30b-a3b \
         -fscot -syn-solve \
         --solving-refine-number 3 \
         --analysis-mode single    
@@ -85,7 +85,7 @@ LLMDFA is an LLM-powered data-flow analysis framework. Specifically, it instanti
 
     ```shell
     cd src
-    python run_llmdfa.py --bug-type xss --model-name gpt-4o-mini \
+    uv run python run_llmdfa.py --bug-type xss --model-name nemotron-lightning-3p5-30b-a3b \
         -syn-parser -syn-solve \
         --solving-refine-number 3 \
         --analysis-mode single    
@@ -95,13 +95,13 @@ LLMDFA is an LLM-powered data-flow analysis framework. Specifically, it instanti
 
     ```shell
     cd src
-    python run_llmdfa.py --bug-type xss --model-name gpt-4o-mini \
+    uv run python run_llmdfa.py --bug-type xss --model-name nemotron-lightning-3p5-30b-a3b \
         -syn-parser -fscot \
         --solving-refine-number 3 \
         --analysis-mode single    
     ```
 
-   The bug reports of the ablations are located in `log/gpt-4o-mini/nosynparser_fscot_synsolver`, `log/gpt-4o-mini/synparser_nofscot_synsolver`, and `log/gpt-4o-mini/synparser_fscot_nosynsolver`, respectively.
+   The bug reports of the ablations are located in `log/nemotron-lightning-3p5-30b-a3b/nosynparser_fscot_synsolver`, `log/nemotron-lightning-3p5-30b-a3b/synparser_nofscot_synsolver`, and `log/nemotron-lightning-3p5-30b-a3b/synparser_fscot_nosynsolver`, respectively.
 
 3. Run end-to-end prompting-based analyses as baselines
 
@@ -109,7 +109,7 @@ LLMDFA is an LLM-powered data-flow analysis framework. Specifically, it instanti
 
     ```shell
     cd src
-    python run_baseline.py --bug-type xss --model-name gpt-4o-mini --analysis-mode single    
+    uv run python run_baseline.py --bug-type xss --model-name nemotron-lightning-3p5-30b-a3b --mode single    
     ```
    
 ## Remark on Dataset

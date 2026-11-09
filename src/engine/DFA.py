@@ -11,6 +11,8 @@ from utility.environment import Environment
 from TSAgent.TS_transformer import TSFunctionTransformer
 from LMAgent.spec.src_extractor import SrcExtractor
 from LMAgent.spec.sink_extractor import SinkExtractor
+from typing import Optional
+
 from LMAgent.flow.intra_flow_propagator import IntraFlowPropagator
 from LMAgent.flow.inter_flow_validator import InterFlowValidator
 
@@ -37,6 +39,7 @@ class DFA:
         solving_refine_number: int,
         openai_key: str,
         temp: float,
+        reasoning_effort: Optional[str] = None,
     ) -> None:
         """
         Initialize DFA with a java file path.
@@ -91,6 +94,19 @@ class DFA:
         if not os.path.exists(self.log_dir_path):
             os.makedirs(self.log_dir_path)
         shutil.copy(java_file_path, self.log_dir_path)
+
+        llm_trace_file = self.log_dir_path + "/llm_calls.jsonl"
+        if os.path.exists(llm_trace_file):
+            os.remove(llm_trace_file)
+        for agent in (
+            self.src_extractor,
+            self.sink_extractor,
+            self.ifp_propagator,
+            self.validator,
+        ):
+            agent.model.trace_file = llm_trace_file
+            agent.model.trace_label = type(agent).__name__
+            agent.model.reasoning_effort = reasoning_effort
 
         # Environment
         self.environment = Environment()
@@ -687,6 +703,12 @@ class DFA:
 
         print("Report generated!\n")
         return
+
+    def compute_unresolved_verdicts(self) -> int:
+        return (
+            self.ifp_propagator.unresolved_verdicts
+            + self.validator.unresolved_verdicts
+        )
 
     def compute_total_token_cost(self):
         input_cost = 0

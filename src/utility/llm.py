@@ -1,220 +1,149 @@
-from openai import *
+import json
 import sys
-import tiktoken
-from typing import Tuple
-import time
-import signal
-from pathlib import Path
-import replicate
-import google.generativeai as genai
+from dataclasses import asdict, dataclass
+from typing import Dict, List, Optional, Tuple
+
+from openai import APIConnectionError, InternalServerError, OpenAI, RateLimitError
+
+FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference/v1"
+FIREWORKS_MODEL_PREFIX = "accounts/fireworks/models/"
+SUPPORTED_MODELS = ["nemotron-lightning-3p5-30b-a3b", "deepseek-v4p1-flash"]
+REASONING_EFFORTS = ["none", "low", "medium", "high", "max"]
+
+REQUEST_TIMEOUT_SECONDS = 180
+MAX_RETRIES = 5
+# Reasoning models spend output tokens on the trace before the final answer.
+MAX_OUTPUT_TOKENS = 16384
+
+
+@dataclass
+class Completion:
+    text: str
+    input_tokens: int
+    output_tokens: int
+    raw_content: str
+    reasoning_content: Optional[str]
+    finish_reason: Optional[str]
+
+
+def strip_reasoning(text: str) -> str:
+    """
+    Remove a reasoning trace from model output, leaving the final answer.
+    A response cut off before </think> has no final answer and yields "".
+    """
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[1]
+    elif "<think>" in text:
+        text = text.split("<think>", 1)[0]
+    return text.strip()
+
+
+def complete(
+    api_key: str,
+    model_name: str,
+    messages: List[Dict[str, str]],
+    temperature: float,
+    reasoning_effort: Optional[str] = None,
+) -> Completion:
+    """
+    Run a chat completion on Fireworks.
+    :return: The final answer, billed token counts and raw reply details
+    """
+    model = (
+        model_name
+        if model_name.startswith("accounts/")
+        else FIREWORKS_MODEL_PREFIX + model_name
+    )
+    client = OpenAI(
+        api_key=api_key,
+        base_url=FIREWORKS_BASE_URL,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+        max_retries=MAX_RETRIES,
+    )
+    extra_body = {}
+    if reasoning_effort is not None:
+        extra_body["reasoning_effort"] = reasoning_effort
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=MAX_OUTPUT_TOKENS,
+        extra_body=extra_body,
+    )
+    choice = response.choices[0]
+    raw_content = choice.message.content or ""
+    usage = response.usage
+    return Completion(
+        text=strip_reasoning(raw_content),
+        input_tokens=usage.prompt_tokens if usage else 0,
+        output_tokens=usage.completion_tokens if usage else 0,
+        raw_content=raw_content,
+        reasoning_content=getattr(choice.message, "reasoning_content", None),
+        finish_reason=choice.finish_reason,
+    )
 
 
 class LLM:
     """
-    An online inference model using ChatGPT
+    An online inference model served by Fireworks
     """
 
     def __init__(
         self,
         online_model_name: str,
-        openai_key: str,
+        api_key: str,
         temperature: float,
         system_role="",
     ) -> None:
         """
-        Initialize the LLM with model name, OpenAI key, and temperature.
+        Initialize the LLM with model name, Fireworks key, and temperature.
         :param online_model_name: Name of the online model to use
-        :param openai_key: API key for OpenAI
+        :param api_key: API key for Fireworks
         :param temperature: Temperature setting for the model
         """
         self.online_model_name = online_model_name
-        self.encoding = tiktoken.encoding_for_model("gpt-3.5-turbo-0125")
-        self.openai_key = openai_key
+        self.api_key = api_key
         self.temperature = temperature
         self.systemRole = system_role
+        self.trace_file: Optional[str] = None
+        self.trace_label = ""
+        self.reasoning_effort: Optional[str] = None
 
-    # Main Inference Function
+    def _trace(self, record: dict) -> None:
+        if self.trace_file:
+            record = {"agent": self.trace_label, **record}
+            with open(self.trace_file, "a") as f:
+                f.write(json.dumps(record) + "\n")
+
     def infer(self, message: str, is_measure_cost: bool = True) -> Tuple[str, int, int]:
         """
         Perform inference using the specified online model.
+
+        Transient failures that outlast the client's retries yield an empty
+        output for this call. Configuration errors (bad key, unavailable
+        model, invalid request) are raised.
         :param message: The input message for the model
         :param is_measure_cost: Flag to measure token cost
         :return: Tuple containing the output, input token cost, and output token cost
         """
-        output = ""
-
-        if "gemini" in self.online_model_name:
-            output = self.infer_with_gemini(message)
-        elif "claude" in self.online_model_name:
-            output = self.infer_claude(message)
-        elif "gpt" in self.online_model_name:
-            output = self.infer_with_openai_model(message)
-
-        input_token_cost = (
-            0
-            if not is_measure_cost
-            else len(self.encoding.encode(self.systemRole))
-            + len(self.encoding.encode(message))
-        )
-        output_token_cost = (
-            0 if not is_measure_cost else len(self.encoding.encode(output))
-        )
-        return output, input_token_cost, output_token_cost
-
-    # Inference with Gemini
-    def infer_with_gemini(self, message: str) -> str:
-        """
-        Perform inference using the Gemini model.
-        :param message: The input message for the model
-        :return: The output from the model
-        """
-
-        def timeout_handler(signum, frame):
-            raise TimeoutError("ChatCompletion timeout")
-
-        def simulate_ctrl_c(signal, frame):
-            raise KeyboardInterrupt("Simulating Ctrl+C")
-
-        gemini_model = genai.GenerativeModel("gemini-pro")
-        signal.signal(signal.SIGALRM, timeout_handler)
-
-        received = False
-        tryCnt = 0
-        while not received:
-            tryCnt += 1
-            try:
-                signal.alarm(50)  # Set a timeout of 50 seconds
-                message = self.systemRole + "\n" + message
-
-                safety_settings = [
-                    {"category": "HARM_CATEGORY_DANGEROUS", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                    {
-                        "category": "HARM_CATEGORY_HATE_SPEECH",
-                        "threshold": "BLOCK_NONE",
-                    },
-                    {
-                        "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                        "threshold": "BLOCK_NONE",
-                    },
-                    {
-                        "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                        "threshold": "BLOCK_NONE",
-                    },
-                ]
-
-                response = gemini_model.generate_content(
-                    message,
-                    safety_settings=safety_settings,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=self.temperature
-                    ),
-                )
-                signal.alarm(0)  # Cancel the timeout
-                output = response.text
-                return output
-            except TimeoutError:
-                received = False
-                simulate_ctrl_c(None, None)  # Simulate Ctrl+C effect
-            except KeyboardInterrupt:
-                received = False
-                continue
-            except Exception:
-                return ""
-            if tryCnt > 5:
-                return ""
-
-    # Inference with Claude
-    def infer_claude(self, message: str) -> str:
-        """
-        Perform inference using the Claude model.
-        :param message: The input message for the model
-        :return: The output from the model
-        """
-
-        def timeout_handler(signum, frame):
-            raise TimeoutError("ChatCompletion timeout")
-
-        def simulate_ctrl_c(signal, frame):
-            raise KeyboardInterrupt("Simulating Ctrl+C")
-
-        input = [
-            {"role": "system", "content": self.systemRole},
-            {"role": "user", "content": message},
-        ]
-        signal.signal(signal.SIGALRM, timeout_handler)
-
-        received = False
-        tryCnt = 0
-        while not received:
-            tryCnt += 1
-            try:
-                signal.alarm(60)  # Set a timeout of 60 seconds
-                openai.api_key = self.openai_key
-                response = openai.ChatCompletion.create(
-                    model=self.online_model_name,
-                    messages=input,
-                    temperature=self.temperature,
-                )
-                signal.alarm(0)  # Cancel the timeout
-                output = response.choices[0].message.content
-                return output
-            except TimeoutError:
-                received = False
-                simulate_ctrl_c(None, None)  # Simulate Ctrl+C effect
-            except KeyboardInterrupt:
-                return ""
-            except Exception:
-                received = False
-            if tryCnt > 5:
-                return ""
-
-    # Inference with OpenAI Model
-    def infer_with_openai_model(self, message: str) -> str:
-        """
-        Perform inference using the OpenAI model.
-        :param message: The input message for the model
-        :return: The output from the model
-        """
-
-        def timeout_handler(signum, frame):
-            raise TimeoutError("ChatCompletion timeout")
-
-        def simulate_ctrl_c(signal, frame):
-            raise KeyboardInterrupt("Simulating Ctrl+C")
-
         model_input = [
             {"role": "system", "content": self.systemRole},
             {"role": "user", "content": message},
         ]
+        try:
+            completion = complete(
+                self.api_key,
+                self.online_model_name,
+                model_input,
+                self.temperature,
+                self.reasoning_effort,
+            )
+        except (APIConnectionError, InternalServerError, RateLimitError) as error:
+            print(f"Inference failed after retries: {error}", file=sys.stderr)
+            self._trace({"prompt": message, "error": str(error)})
+            return "", 0, 0
 
-        received = False
-        tryCnt = 0
-        output = ""
-
-        signal.signal(signal.SIGALRM, timeout_handler)
-        while not received:
-            tryCnt += 1
-            try:
-                signal.alarm(10)  # Set a timeout of 10 seconds
-                client = OpenAI(api_key=self.openai_key)
-                response = client.chat.completions.create(
-                    model=self.online_model_name,
-                    messages=model_input,
-                    temperature=self.temperature,
-                )
-                signal.alarm(0)  # Cancel the timeout
-                output = response.choices[0].message.content
-                received = True
-                break
-            except TimeoutError:
-                received = False
-                simulate_ctrl_c(None, None)  # Simulate Ctrl+C effect
-            except KeyboardInterrupt:
-                output = ""
-                break
-            except Exception:
-                received = False
-            if tryCnt > 5:
-                output = ""
-        return output
+        self._trace({"prompt": message, **asdict(completion)})
+        if not is_measure_cost:
+            return completion.text, 0, 0
+        return completion.text, completion.input_tokens, completion.output_tokens

@@ -139,26 +139,11 @@ class IntraFlowPropagator(LMAgent):
                         "<ANSWER>", self.fetch_answer_format_no_fscot()
                     )
 
-                is_reachable = False
-                while True:
+                verdict = self.query_verdict(message)
+                self.response = self.last_verdict_response
 
-                    output, input_token_cost, output_token_cost = self.model.infer(
-                        message, True
-                    )
-                    self.total_input_token_cost += input_token_cost
-                    self.total_output_token_cost += output_token_cost
-                    self.response = output
-
-                    yes_no_vector = LMAgent.process_yes_no_list_in_response(
-                        self.response
-                    )
-                    if len(yes_no_vector) == 0:
-                        continue
-                    if yes_no_vector[0] == "Yes":
-                        is_reachable = True
-                    break
-
-                if is_reachable:
+                # An unreadable reply keeps the pair for later validation.
+                if verdict is not False:
                     reachable_pairs.append((src, sink))
                 else:
                     unreachable_pairs.append((src, sink))

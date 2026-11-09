@@ -167,3 +167,4 @@ benchmark/*_simplified/
 benchmark/*_simplified/
 src/_*_extractor.py
 src/_extractors.py
+log

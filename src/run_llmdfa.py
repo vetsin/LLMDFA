@@ -5,7 +5,8 @@ import os
 import re
 import time
 from engine.DFA import DFA
-from typing import List
+from utility.llm import REASONING_EFFORTS, SUPPORTED_MODELS
+from typing import List, Optional
 from pathlib import Path
 from typing import Tuple
 import json
@@ -133,6 +134,7 @@ class BatchRun:
         temp: float,
         model_key: str,
         analysis_mode: str,
+        reasoning_effort: Optional[str] = None,
     ):
         self.src_spec_file = src_spec_file
         self.sink_spec_file = sink_spec_file
@@ -145,6 +147,7 @@ class BatchRun:
         self.analyzed_java_files = []
         self.all_single_files = []
         self.analysis_mode = analysis_mode
+        self.reasoning_effort = reasoning_effort
 
         self.online_model_name = online_model_name
 
@@ -336,6 +339,8 @@ class BatchRun:
             log_dir_name += "synsolver"
         else:
             log_dir_name += "nosynsolver"
+        if self.reasoning_effort is not None:
+            log_dir_name += "_effort-" + self.reasoning_effort
 
         base_log_dir_path = str(
             Path(__file__).resolve().parent.parent
@@ -356,7 +361,9 @@ class BatchRun:
             for file in files:
                 support_files.append(support_dir + "/" + str(file))
 
-        total_results = {}
+        total_results = {"TPs": 0, "FPs": 0}
+        total_ground_truth = {"TPs": 0, "FPs": 0}
+        total_unresolved_verdicts = 0
 
         # for java_file in self.analyzed_java_files:
         for java_file in self.all_single_files:
@@ -378,6 +385,7 @@ class BatchRun:
                 self.solving_refine_number,
                 self.model_key,
                 self.temp,
+                self.reasoning_effort,
             )
 
             print(
@@ -406,6 +414,7 @@ class BatchRun:
                 "output_token_cost": output_token_cost,
                 "analysis_result": results,
                 "ground_truth": {"TPs": positive_num, "FPs": negative_num},
+                "unresolved_verdicts": DFAEngine.compute_unresolved_verdicts(),
                 "single time cost": single_time_cost,
             }
 
@@ -416,9 +425,11 @@ class BatchRun:
             with open(single_log_dir_path + "/report_summary.json", "w") as file:
                 json.dump(analysis_result, file, indent=4)
 
-            total_results = {"TPs": 0, "FPs": 0}
             total_results["TPs"] += results["TPs"]
             total_results["FPs"] += results["FPs"]
+            total_ground_truth["TPs"] += positive_num
+            total_ground_truth["FPs"] += negative_num
+            total_unresolved_verdicts += analysis_result["unresolved_verdicts"]
 
             print("===================================================")
             print(DFA_num, " / ", len(self.all_single_files), "\n")
@@ -432,6 +443,17 @@ class BatchRun:
             if DFA_num > 10 and self.analysis_mode == "single":
                 break
 
+        run_summary = {
+            "analysis_result": total_results,
+            "ground_truth": total_ground_truth,
+            "unresolved_verdicts": total_unresolved_verdicts,
+            "input_token_cost": total_input_token_cost,
+            "output_token_cost": total_output_token_cost,
+        }
+        with open(base_log_dir_path + "/run_summary.json", "w") as file:
+            json.dump(run_summary, file, indent=4)
+        print("Run summary:", run_summary)
+
         return
 
 
@@ -439,8 +461,6 @@ def run():
     """
     Run the LLMDFA analysis with specified parameters.
     """
-    models = ["gpt-3.5-turbo", "gpt-4-turbo", "gpt-4o-mini"]
-
     bug_type_mapping = {
         "dbz": (
             "juliet-test-suite-DBZ",
@@ -473,7 +493,7 @@ def run():
     )
     parser.add_argument(
         "--model-name",
-        choices=models,
+        choices=SUPPORTED_MODELS,
         required=True,
         help="The model name to use for analysis.",
     )
@@ -497,6 +517,11 @@ def run():
         help="Number of solving refine iterations.",
     )
     parser.add_argument(
+        "--reasoning-effort",
+        choices=REASONING_EFFORTS,
+        help="Reasoning level for models that support it; defaults to the model's own.",
+    )
+    parser.add_argument(
         "--analysis-mode",
         choices=["all", "single"],
         help="Analyze all the subjects or a single demo",
@@ -510,7 +535,7 @@ def run():
     )
     project_name = bug_type
 
-    tokenkeys = os.environ.get("OPENAI_API_KEY").split(":")
+    api_key = os.environ["FIREWORKS_API_KEY"]
 
     batch_run = BatchRun(
         src_spec,
@@ -524,8 +549,9 @@ def run():
         args.syn_solver,
         args.solving_refine_number,
         0,
-        tokenkeys[0],
+        api_key,
         args.analysis_mode,
+        args.reasoning_effort,
     )
     batch_run.startBatchRun(main_test)
 

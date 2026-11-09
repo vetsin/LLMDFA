@@ -12,7 +12,8 @@ import time
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
 from TSAgent.synthesis.utils import SynSpec, Example
-from TSAgent.synthesis.llm import GPT, LLM, Claude, Gemini
+from TSAgent.synthesis.llm import FireworksLLM, LLM
+from utility.llm import SUPPORTED_MODELS
 from TSAgent.synthesis.prompts.examples import (
     dbz_source_examples,
     dbz_sink_examples,
@@ -105,44 +106,12 @@ def synthesize_ci_sink(model: LLM) -> tuple[str, int]:
 
 
 def select_model(name: str, temperature: int, output_file: str) -> LLM:
-    if name == "gpt3.5":
-        model = GPT(
-            api_key=os.environ.get("OPENAI_API_KEY"),
-            model="gpt-3.5-turbo-1106",
-            temperature=temperature,
-            log_file=output_file,
-        )
-    elif name == "gpt4":
-        model = GPT(
-            api_key=os.environ.get("OPENAI_API_KEY"),
-            model="gpt-4-0125-preview",
-            temperature=temperature,
-            log_file=output_file,
-        )
-    elif name == "gpt-4o-mini":
-        model = GPT(
-            api_key=os.environ.get("OPENAI_API_KEY"),
-            model="gpt-4o-mini",
-            temperature=temperature,
-            log_file=output_file,
-        )
-    elif name == "gemini-pro":
-        model = Gemini(
-            api_key=os.environ.get("GOOGLE_API_KEY"),
-            model="gemini-pro",
-            temperature=temperature,
-            log_file=output_file,
-        )
-    elif name == "claude-haiku":
-        model = Claude(
-            api_key=os.environ.get("CLAUDE_API_KEY"),
-            model="claude-3-haiku-20240307",
-            temperature=temperature,
-            log_file=output_file,
-        )
-    else:
-        raise ValueError(f"Unknown model name {name}")
-    return model
+    return FireworksLLM(
+        api_key=os.environ["FIREWORKS_API_KEY"],
+        model=name,
+        temperature=temperature,
+        log_file=output_file,
+    )
 
 
 def run(
@@ -196,8 +165,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         type=str,
-        default="gpt3.5",
-        choices=["gpt3.5", "gpt4", "gpt-4o-mini", "gemini-pro", "claude-haiku"],
+        default=SUPPORTED_MODELS[0],
+        choices=SUPPORTED_MODELS,
         help="The model to use",
     )
     parser.add_argument(
